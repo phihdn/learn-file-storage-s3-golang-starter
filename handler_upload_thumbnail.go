@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,20 +48,22 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	// Get the content type and determine file extension
-	contentType := fileHeader.Header.Get("Content-Type")
+	// Parse and validate the Content-Type
+	mediaType, _, err := mime.ParseMediaType(fileHeader.Header.Get("Content-Type"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid Content-Type header", err)
+		return
+	}
+
+	// Only allow jpeg and png files
 	ext := ""
-	switch contentType {
+	switch mediaType {
 	case "image/jpeg":
 		ext = ".jpg"
 	case "image/png":
 		ext = ".png"
-	case "image/gif":
-		ext = ".gif"
-	case "application/pdf":
-		ext = ".pdf"
 	default:
-		respondWithError(w, http.StatusBadRequest, "Unsupported file type", nil)
+		respondWithError(w, http.StatusBadRequest, "File type not allowed. Only JPEG and PNG images are supported.", nil)
 		return
 	}
 
