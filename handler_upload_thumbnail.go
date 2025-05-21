@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -46,13 +47,20 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	// Get the content type
+	// Get the content type and determine file extension
 	contentType := fileHeader.Header.Get("Content-Type")
-
-	// Read all the image data
-	imageData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error reading thumbnail data", err)
+	ext := ""
+	switch contentType {
+	case "image/jpeg":
+		ext = ".jpg"
+	case "image/png":
+		ext = ".png"
+	case "image/gif":
+		ext = ".gif"
+	case "application/pdf":
+		ext = ".pdf"
+	default:
+		respondWithError(w, http.StatusBadRequest, "Unsupported file type", nil)
 		return
 	}
 
@@ -68,14 +76,34 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Create data URL from image data
-	base64Data := base64.StdEncoding.EncodeToString(imageData)
-	dataURL := fmt.Sprintf("data:%s;base64,%s", contentType, base64Data)
-	video.ThumbnailURL = &dataURL
+	// Create the file path using videoID as the filename
+	filename := videoID.String() + ext
+	filePath := filepath.Join(cfg.assetsRoot, filename)
+
+	// Create the destination file
+	destFile, err := os.Create(filePath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't create file", err)
+		return
+	}
+	defer destFile.Close()
+
+	// Copy the uploaded file to destination
+	_, err = io.Copy(destFile, file)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't save file", err)
+		return
+	}
+
+	// Update the video metadata with new thumbnail URL
+	thumbnailURL := fmt.Sprintf("http://localhost:%s/assets/%s", cfg.port, filename)
+	video.ThumbnailURL = &thumbnailURL
 
 	// Save the updated video metadata
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
+		// Try to cleanup the file if database update fails
+		os.Remove(filePath)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't update video", err)
 		return
 	}
