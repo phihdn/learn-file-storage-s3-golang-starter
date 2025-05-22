@@ -9,11 +9,31 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
+
+// processVideoForFastStart takes a file path as input and processes the video
+// to enable "fast start" for better streaming. It returns the path to the processed file.
+func processVideoForFastStart(filePath string) (string, error) {
+	outputPath := filePath + ".processing"
+
+	cmd := exec.Command("ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags", "faststart",
+		"-f", "mp4",
+		outputPath)
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to process video: %w", err)
+	}
+
+	return outputPath, nil
+}
 
 /*
 Complete the (currently empty) handlerUploadVideo handler to store video files in S3. Images will stay on the local file system for now. I recommend using the image upload handler as a reference.
@@ -126,12 +146,21 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Reset file pointer to beginning
-	_, err = tempFile.Seek(0, io.SeekStart)
+	// Process video for fast start
+	processedVideoPath, err := processVideoForFastStart(tempFile.Name())
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Couldn't reset file pointer", err)
+		respondWithError(w, http.StatusInternalServerError, "Couldn't process video for fast start", err)
 		return
 	}
+	defer os.Remove(processedVideoPath) // Clean up the processed file when we're done
+
+	// Open the processed file for uploading
+	processedFile, err := os.Open(processedVideoPath)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't open processed video file", err)
+		return
+	}
+	defer processedFile.Close()
 
 	// Generate random filename for S3
 	randomBytes := make([]byte, 32)
@@ -155,7 +184,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &filename,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &mediaType,
 	})
 	if err != nil {
