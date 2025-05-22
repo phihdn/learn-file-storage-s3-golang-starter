@@ -119,6 +119,13 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Get video aspect ratio
+	aspectRatio, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Couldn't determine video aspect ratio", err)
+		return
+	}
+
 	// Reset file pointer to beginning
 	_, err = tempFile.Seek(0, io.SeekStart)
 	if err != nil {
@@ -133,7 +140,16 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusInternalServerError, "Couldn't generate random filename", err)
 		return
 	}
-	filename := hex.EncodeToString(randomBytes) + ".mp4"
+
+	// Add orientation prefix based on aspect ratio
+	prefix := "other"
+	switch aspectRatio {
+	case "16:9":
+		prefix = "landscape"
+	case "9:16":
+		prefix = "portrait"
+	}
+	filename := fmt.Sprintf("%s/%s.mp4", prefix, hex.EncodeToString(randomBytes))
 
 	// Upload to S3
 	_, err = cfg.s3Client.PutObject(context.Background(), &s3.PutObjectInput{
